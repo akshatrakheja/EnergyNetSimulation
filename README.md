@@ -1,4 +1,4 @@
-# EnergyNet Phase 2 — Community DC Microgrid Simulation
+# EnergyNet — Community DC Microgrid Simulation
 
 ## What EnergyNet is
 
