@@ -1,48 +1,84 @@
 import React from "react";
 import { useStore } from "../store";
 
-function fmt(val: unknown): string {
-  if (val === null || val === undefined) return "—";
-  if (typeof val === "number") {
-    if (Math.abs(val) >= 1_000_000) return `₹${(val / 100_000).toFixed(1)}L`;
-    if (Math.abs(val) >= 1_000) return `₹${(val / 1_000).toFixed(1)}K`;
-    return val.toFixed(2);
-  }
-  return String(val);
+// ── Formatting ────────────────────────────────────────────────────────────────
+
+function fmtRs(v: number | null | undefined): string {
+  if (v === null || v === undefined) return "—";
+  const abs = Math.abs(v);
+  if (abs >= 1_000_000) return `${v < 0 ? "−" : ""}₹${(abs / 100_000).toFixed(1)}L`;
+  if (abs >= 1_000)     return `${v < 0 ? "−" : ""}₹${(abs / 1_000).toFixed(1)}K`;
+  return `${v < 0 ? "−" : ""}₹${abs.toFixed(0)}`;
 }
 
-function Metric({
-  label,
-  value,
-  unit,
-  color,
-}: {
-  label: string;
-  value: unknown;
-  unit?: string;
-  color?: string;
+function fmtNum(v: number | null | undefined, decimals = 1): string {
+  if (v === null || v === undefined) return "—";
+  return v.toFixed(decimals);
+}
+
+// ── Sub-components ────────────────────────────────────────────────────────────
+
+function KV({ label, value, color, sub }: {
+  label: string; value: React.ReactNode; color?: string; sub?: string;
 }) {
   return (
-    <div style={styles.metric}>
-      <div style={{ color: "#888", fontSize: 10, marginBottom: 2 }}>{label}</div>
-      <div style={{ color: color ?? "#fff", fontSize: 16, fontWeight: 700 }}>
-        {fmt(value)}
-        {unit && <span style={{ fontSize: 10, color: "#888", marginLeft: 2 }}>{unit}</span>}
+    <div style={{
+      background: "var(--surface)", borderRadius: "var(--radius)",
+      border: "1px solid var(--border)", padding: "8px 10px",
+    }}>
+      <div style={{ color: "var(--text-muted)", fontSize: 10, marginBottom: 3, letterSpacing: "0.02em" }}>{label}</div>
+      <div style={{ color: color ?? "var(--text)", fontSize: 15, fontWeight: 600, letterSpacing: "-0.02em", fontVariantNumeric: "tabular-nums" }}>
+        {value}
+        {sub && <span style={{ fontSize: 10, color: "var(--text-muted)", fontWeight: 400, marginLeft: 3 }}>{sub}</span>}
       </div>
     </div>
   );
 }
 
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{
+      color: "var(--text-muted)", fontSize: 10, fontWeight: 600,
+      letterSpacing: "0.08em", textTransform: "uppercase",
+      marginBottom: 6, marginTop: 12, paddingBottom: 5,
+      borderBottom: "1px solid var(--border)",
+    }}>
+      {children}
+    </div>
+  );
+}
+
+function PlRow({ label, value, positive }: { label: string; value: string; positive: boolean }) {
+  return (
+    <div style={{
+      display: "flex", justifyContent: "space-between", alignItems: "center",
+      padding: "3px 0", borderBottom: "1px solid var(--border)",
+    }}>
+      <span style={{ color: "var(--text-secondary)", fontSize: 11 }}>{label}</span>
+      <span style={{ color: positive ? "var(--green)" : "var(--red)", fontSize: 11, fontWeight: 500, fontVariantNumeric: "tabular-nums" }}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+// ── Main ─────────────────────────────────────────────────────────────────────
+
 export default function ResultsPanel() {
-  const result = useStore((s) => s.result);
+  const result       = useStore((s) => s.result);
   const playbackStep = useStore((s) => s.playbackStep);
-  const setPlaybackStep = useStore((s) => s.setPlaybackStep);
+  const setPlayback  = useStore((s) => s.setPlaybackStep);
 
   if (!result) {
     return (
-      <div style={styles.panel}>
-        <div style={styles.empty}>
-          Run a simulation to see results here
+      <div style={{
+        width: 256, background: "var(--panel)", borderRight: "1px solid var(--border)",
+        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+        padding: 24, gap: 8,
+      }}>
+        <div style={{ fontSize: 28, opacity: 0.3 }}>⚡</div>
+        <div style={{ color: "var(--text-muted)", fontSize: 12, textAlign: "center", lineHeight: 1.6 }}>
+          Configure nodes and run a simulation to see economics here
         </div>
       </div>
     );
@@ -51,156 +87,99 @@ export default function ResultsPanel() {
   const e = result.economics as Record<string, any>;
   const m = result.metrics as Record<string, any>;
   const verdict = result.viable_vs_retail;
-  const verdictColor =
-    verdict === "green" ? "#4caf50" : verdict === "amber" ? "#ffc107" : "#ef5350";
-  const verdictLabel =
-    verdict === "green"
-      ? "VIABLE"
-      : verdict === "amber"
-      ? "MARGINAL"
-      : "NOT VIABLE";
+  const verdictColor = verdict === "green" ? "var(--green)" : verdict === "amber" ? "var(--amber)" : "var(--red)";
+  const verdictLabel = verdict === "green" ? "Viable" : verdict === "amber" ? "Marginal" : "Not Viable";
 
   const totalSteps = result.timeseries.length;
-  const currentTime = result.timeseries[playbackStep]?.t ?? "";
+  const ts = result.timeseries[playbackStep]?.t ?? "";
+  const timeLabel = ts.includes("T") ? ts.split("T")[1]?.slice(0, 5) : ts;
 
   return (
-    <div style={styles.panel}>
-      {/* Verdict badge */}
-      <div style={{ ...styles.verdict, background: verdictColor }}>
-        {verdictLabel}
-      </div>
-      <div style={{ color: "#888", fontSize: 10, textAlign: "center", marginBottom: 8 }}>
-        Viable tariff: ₹{e.viable_tariff_rs_per_kwh}/kWh &nbsp;|&nbsp;
-        Simulated in {result.sim_seconds}s
+    <div style={{
+      width: 256, background: "var(--panel)", borderRight: "1px solid var(--border)",
+      overflowY: "auto", padding: "12px 10px 20px", flexShrink: 0,
+    }}>
+
+      {/* Verdict */}
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        padding: "8px 10px",
+        background: `${verdictColor}10`,
+        border: `1px solid ${verdictColor}30`,
+        borderRadius: "var(--radius-md)",
+        marginBottom: 6,
+      }}>
+        <div>
+          <div style={{ color: verdictColor, fontSize: 13, fontWeight: 700, letterSpacing: "-0.01em" }}>
+            {verdictLabel}
+          </div>
+          <div style={{ color: "var(--text-secondary)", fontSize: 10, marginTop: 1 }}>
+            Viable tariff: <b style={{ color: "var(--text)" }}>₹{e.viable_tariff_rs_per_kwh}/kWh</b>
+          </div>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ color: "var(--text-muted)", fontSize: 9 }}>sim time</div>
+          <div style={{ color: "var(--text-secondary)", fontSize: 11, fontVariantNumeric: "tabular-nums" }}>
+            {result.sim_seconds}s
+          </div>
+        </div>
       </div>
 
-      {/* Key metrics */}
-      <div style={styles.metricsGrid}>
-        <Metric label="LCOE" value={e.lcoe_mesh_rs_per_kwh} unit="₹/kWh" />
-        <Metric label="Viable Tariff" value={e.viable_tariff_rs_per_kwh} unit="₹/kWh" color={verdictColor} />
-        <Metric label="Payback" value={e.payback_years} unit="yr" />
-        <Metric label="NPV" value={e.npv_rs} unit="" />
-        <Metric label="Net Annual" value={e.net_annual_rs} unit=""
-          color={e.net_annual_rs >= 0 ? "#4caf50" : "#ef5350"} />
-        <Metric label="CAPEX (post-subsidy)" value={e.capex_after_subsidies_rs} unit="" />
+      {/* Key metrics 2-col */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, marginBottom: 4 }}>
+        <KV label="LCOE" value={`₹${e.lcoe_mesh_rs_per_kwh}`} sub="/kWh" />
+        <KV label="Viable Tariff" value={`₹${e.viable_tariff_rs_per_kwh}`} sub="/kWh" color={verdictColor} />
+        <KV label="Payback" value={e.payback_years != null ? e.payback_years : "∞"} sub="yr" />
+        <KV label="NPV" value={fmtRs(e.npv_rs)} color={e.npv_rs >= 0 ? "var(--green)" : "var(--red)"} />
+        <KV label="Net Annual" value={fmtRs(e.net_annual_rs)} color={e.net_annual_rs >= 0 ? "var(--green)" : "var(--red)"} />
+        <KV label="CAPEX (net)" value={fmtRs(e.capex_after_subsidies_rs)} />
       </div>
 
-      {/* Physics metrics */}
-      <div style={styles.sectionTitle}>PHYSICS</div>
-      <div style={styles.metricsGrid}>
-        <Metric label="Self-Sufficiency" value={m.self_sufficiency_pct} unit="%" />
-        <Metric label="Self-Consumption" value={m.self_consumption_pct} unit="%" />
-        <Metric label="Grid Import" value={m.grid_import_kwh} unit="kWh" />
-        <Metric label="Grid Export" value={m.grid_export_kwh} unit="kWh" />
-        <Metric label="Shed Load" value={m.shed_load_kwh} unit="kWh"
-          color={m.shed_load_kwh > 0.1 ? "#ef5350" : "#4caf50"} />
-        <Metric label="Diesel Fuel" value={m.generator_fuel_L} unit="L" />
+      {/* Physics */}
+      <SectionLabel>Physics</SectionLabel>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, marginBottom: 4 }}>
+        <KV label="Self-Sufficiency" value={`${fmtNum(m.self_sufficiency_pct)}%`} />
+        <KV label="Self-Consumption" value={`${fmtNum(m.self_consumption_pct)}%`} />
+        <KV label="Grid Import" value={fmtNum(m.grid_import_kwh)} sub="kWh" />
+        <KV label="Grid Export" value={fmtNum(m.grid_export_kwh)} sub="kWh" />
+        <KV label="Shed Load" value={fmtNum(m.shed_load_kwh)} sub="kWh"
+          color={m.shed_load_kwh > 0.1 ? "var(--red)" : "var(--green)"} />
+        <KV label="Diesel Used" value={fmtNum(m.generator_fuel_L)} sub="L" />
       </div>
 
-      {/* Revenue / Cost breakdown */}
-      <div style={styles.sectionTitle}>P&L (ANNUAL)</div>
-      <div style={styles.plRow}>
-        <span style={styles.plLabel}>Energy Sales</span>
-        <span style={{ color: "#4caf50" }}>{fmt(e.revenue_energy_sales_rs)}</span>
-      </div>
-      <div style={styles.plRow}>
-        <span style={styles.plLabel}>P2P Export</span>
-        <span style={{ color: "#4caf50" }}>{fmt(e.revenue_p2p_rs)}</span>
-      </div>
-      <div style={styles.plRow}>
-        <span style={styles.plLabel}>Carbon Credits</span>
-        <span style={{ color: "#4caf50" }}>{fmt(e.revenue_carbon_rs)}</span>
-      </div>
-      <div style={{ ...styles.plRow, borderTop: "1px solid #2a2a4a", paddingTop: 4 }}>
-        <span style={styles.plLabel}>Annualized CAPEX+O&M</span>
-        <span style={{ color: "#ef5350" }}>−{fmt(e.annual_cost_rs)}</span>
-      </div>
-      <div style={styles.plRow}>
-        <span style={styles.plLabel}>Grid Import Cost</span>
-        <span style={{ color: "#ef5350" }}>−{fmt(e.cost_grid_import_rs)}</span>
-      </div>
-      <div style={styles.plRow}>
-        <span style={styles.plLabel}>Fuel Cost</span>
-        <span style={{ color: "#ef5350" }}>−{fmt(e.cost_fuel_rs)}</span>
-      </div>
-      <div style={styles.plRow}>
-        <span style={styles.plLabel}>VOLL Penalty</span>
-        <span style={{ color: "#ef5350" }}>−{fmt(e.cost_voll_penalty_rs)}</span>
-      </div>
+      {/* P&L */}
+      <SectionLabel>Annual P&L</SectionLabel>
+      <PlRow label="Energy Sales"     value={fmtRs(e.revenue_energy_sales_rs)} positive />
+      <PlRow label="P2P Export"       value={fmtRs(e.revenue_p2p_rs)}          positive />
+      <PlRow label="Carbon Credits"   value={fmtRs(e.revenue_carbon_rs)}       positive />
+      <PlRow label="CAPEX + O&M"      value={`−${fmtRs(e.annual_cost_rs)}`}    positive={false} />
+      <PlRow label="Grid Import Cost" value={`−${fmtRs(e.cost_grid_import_rs)}`} positive={false} />
+      <PlRow label="Fuel Cost"        value={`−${fmtRs(e.cost_fuel_rs)}`}      positive={false} />
+      <PlRow label="VOLL Penalty"     value={`−${fmtRs(e.cost_voll_penalty_rs)}`} positive={false} />
 
-      {/* Timeline scrubber */}
-      <div style={styles.sectionTitle}>TIMELINE</div>
-      <div style={{ color: "#7ecfff", fontSize: 11, marginBottom: 4 }}>
-        Step {playbackStep + 1} / {totalSteps}
-        {currentTime && <span> — {currentTime.split("T")[1]?.slice(0, 5) ?? currentTime}</span>}
+      {/* Timeline */}
+      <SectionLabel>Timeline</SectionLabel>
+      <div style={{
+        display: "flex", justifyContent: "space-between", alignItems: "center",
+        marginBottom: 5,
+      }}>
+        <span style={{ color: "var(--text-muted)", fontSize: 10, fontVariantNumeric: "tabular-nums" }}>
+          {timeLabel}
+        </span>
+        <span style={{ color: "var(--text-muted)", fontSize: 10 }}>
+          {playbackStep + 1} / {totalSteps}
+        </span>
       </div>
       <input
         type="range"
-        min={0}
-        max={totalSteps - 1}
-        value={playbackStep}
-        onChange={(e) => setPlaybackStep(parseInt(e.target.value))}
-        style={{ width: "100%", accentColor: "#7ecfff" }}
+        min={0} max={totalSteps - 1} value={playbackStep}
+        onChange={(e) => setPlayback(parseInt(e.target.value))}
+        style={{
+          width: "100%",
+          background: `linear-gradient(to right, var(--accent) ${(playbackStep / (totalSteps - 1)) * 100}%, var(--surface) ${(playbackStep / (totalSteps - 1)) * 100}%)`,
+        }}
+        className="accent"
       />
     </div>
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  panel: {
-    width: 280,
-    background: "#0a0a23",
-    borderRight: "1px solid #1a1a4a",
-    overflowY: "auto",
-    padding: 12,
-  },
-  empty: {
-    color: "#555",
-    fontSize: 13,
-    textAlign: "center",
-    marginTop: 80,
-    padding: 20,
-    lineHeight: 1.6,
-  },
-  verdict: {
-    textAlign: "center",
-    color: "#fff",
-    fontSize: 14,
-    fontWeight: 800,
-    padding: "6px 0",
-    borderRadius: 6,
-    marginBottom: 4,
-    letterSpacing: 2,
-  },
-  metricsGrid: {
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: 6,
-    marginBottom: 10,
-  },
-  metric: {
-    background: "#16213e",
-    borderRadius: 6,
-    padding: "6px 8px",
-  },
-  sectionTitle: {
-    color: "#666",
-    fontSize: 10,
-    fontWeight: 700,
-    letterSpacing: 1.5,
-    marginBottom: 6,
-    marginTop: 4,
-    borderBottom: "1px solid #1a1a3a",
-    paddingBottom: 3,
-  },
-  plRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    fontSize: 11,
-    marginBottom: 3,
-    padding: "2px 4px",
-  },
-  plLabel: {
-    color: "#888",
-  },
-};
