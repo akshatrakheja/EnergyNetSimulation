@@ -203,28 +203,62 @@ export default function Sidebar() {
 
       {/* Selected node */}
       {selectedNode && (
-        <Section title={`Node · ${selectedNode.id}`}>
-          <div style={{ color: "var(--text-muted)", fontSize: 10, marginBottom: 8, textTransform: "capitalize" }}>
-            {selectedNode.node_type.replace("_", " ")}
+        <Section title={<>Node · <span style={{ color: "var(--accent)", fontWeight: 700 }}>{selectedNode.id}</span></>}>
+          {/* Type badge */}
+          <div style={{
+            display: "inline-flex", alignItems: "center", gap: 5,
+            padding: "2px 7px", borderRadius: 99, marginBottom: 10,
+            border: `1px solid ${selectedNode.has_grid_port
+              ? "rgba(254,109,126,0.35)"
+              : "var(--border-mid)"}`,
+            background: selectedNode.has_grid_port
+              ? "rgba(254,109,126,0.08)"
+              : "rgba(255,255,255,0.04)",
+            fontSize: 10, color: selectedNode.has_grid_port ? "var(--red)" : "var(--text-muted)",
+            textTransform: "capitalize",
+          }}>
+            {selectedNode.has_grid_port ? "⚡ Grid Port / VSC" : selectedNode.node_type.replace(/_/g, " ")}
           </div>
-          <Slider label="Solar (kW)" value={selectedNode.pv_kw} min={0} max={50} step={0.5} unit=" kW"
-            onChange={(v) => updateNode(selectedNode.id, { pv_kw: v })} />
-          <Slider label="Battery (kWh)" value={selectedNode.battery_kwh} min={0} max={100} step={1} unit=" kWh"
-            onChange={(v) => updateNode(selectedNode.id, { battery_kwh: v })} />
-          <Slider label="Avg Load (kW)" value={selectedNode.avg_load_kw} min={0} max={10} step={0.1} unit=" kW"
-            onChange={(v) => updateNode(selectedNode.id, { avg_load_kw: v })} />
-          <Slider label="Genset (kW)" value={selectedNode.generator_kw} min={0} max={20} step={0.5} unit=" kW"
-            onChange={(v) => updateNode(selectedNode.id, { generator_kw: v })} />
-          <Toggle label="Grid Port" value={selectedNode.has_grid_port}
-            onChange={(v) => updateNode(selectedNode.id, { has_grid_port: v })} />
-          <Toggle label="Deferrable" value={selectedNode.is_deferrable}
-            onChange={(v) => updateNode(selectedNode.id, { is_deferrable: v })} />
+
+          {selectedNode.has_grid_port ? (
+            /* Grid meter node — controls the utility connection */
+            <>
+              <div style={{
+                fontSize: 10, color: "var(--text-muted)", lineHeight: 1.5, marginBottom: 10,
+              }}>
+                This is the VSC node — it interfaces the DC microgrid with the utility grid.
+                It sets the DC bus voltage reference and handles import/export.
+                No local load or generation is modelled here; adjust physics through the simulation.
+              </div>
+              <Toggle label="Has grid port" value={selectedNode.has_grid_port}
+                onChange={(v) => updateNode(selectedNode.id, { has_grid_port: v })} />
+              <Slider label="Rooftop solar (kW)" value={selectedNode.pv_kw} min={0} max={20} step={0.5} unit=" kW"
+                onChange={(v) => updateNode(selectedNode.id, { pv_kw: v })} />
+            </>
+          ) : (
+            /* Regular prosumer node */
+            <>
+              <Slider label="Solar (kW)" value={selectedNode.pv_kw} min={0} max={50} step={0.5} unit=" kW"
+                onChange={(v) => updateNode(selectedNode.id, { pv_kw: v })} />
+              <Slider label="Battery (kWh)" value={selectedNode.battery_kwh} min={0} max={100} step={1} unit=" kWh"
+                onChange={(v) => updateNode(selectedNode.id, { battery_kwh: v })} />
+              <Slider label="Avg Load (kW)" value={selectedNode.avg_load_kw} min={0} max={10} step={0.1} unit=" kW"
+                onChange={(v) => updateNode(selectedNode.id, { avg_load_kw: v })} />
+              <Slider label="Genset (kW)" value={selectedNode.generator_kw} min={0} max={20} step={0.5} unit=" kW"
+                onChange={(v) => updateNode(selectedNode.id, { generator_kw: v })} />
+              <Toggle label="Grid port" value={selectedNode.has_grid_port}
+                onChange={(v) => updateNode(selectedNode.id, { has_grid_port: v })} />
+              <Toggle label="Deferrable load" value={selectedNode.is_deferrable}
+                onChange={(v) => updateNode(selectedNode.id, { is_deferrable: v })} />
+            </>
+          )}
+
           <button
             onClick={() => removeNode(selectedNode.id)}
             style={{
-              width: "100%", marginTop: 4, padding: "5px 0",
+              width: "100%", marginTop: 6, padding: "5px 0",
               background: "transparent",
-              color: "var(--red)", border: "1px solid rgba(248,113,113,0.25)",
+              color: "var(--red)", border: "1px solid rgba(248,113,113,0.20)",
               borderRadius: "var(--radius)", cursor: "pointer",
               fontSize: 11, fontFamily: "inherit",
               transition: "background 120ms var(--ease)",

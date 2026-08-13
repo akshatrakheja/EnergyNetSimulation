@@ -51,6 +51,16 @@ export interface TimeSeriesPoint {
   curtailed_kw: number;
   islanded: boolean;
   node_data: Record<string, Record<string, number>>;
+  vm_pu: Record<string, number>;
+  line_flows_kw: Record<string, number>;
+  line_loading_pct: Record<string, number>;
+}
+
+export interface TopologyEdge {
+  name: string;
+  from_node: string;
+  to_node: string;
+  length_km: number;
 }
 
 export interface SimResult {
@@ -60,6 +70,7 @@ export interface SimResult {
   economics: Record<string, unknown>;
   timeseries: TimeSeriesPoint[];
   viable_vs_retail: "green" | "amber" | "red";
+  topology: TopologyEdge[];
 }
 
 // ---------------------------------------------------------------------------
@@ -114,6 +125,7 @@ interface AppState {
   environment: EnvironmentSpec;
   economics: EconomicsSpec;
   selectedNodeId: string | null;
+  customEdges: TopologyEdge[];
 
   result: SimResult | null;
   configHash: string | null;
@@ -138,11 +150,13 @@ interface AppState {
   setError: (e: string | null) => void;
   setPlaybackStep: (s: number) => void;
   loadPreset: (nodes: NodeSpec[], env: Partial<EnvironmentSpec>) => void;
+  addCustomEdge: (fromId: string, toId: string) => void;
+  removeCustomEdge: (name: string) => void;
 }
 
 let _nodeCounter = 0;
 
-export const useStore = create<AppState>((set) => ({
+export const useStore = create<AppState>((set, get) => ({
   nodes: [
     { id: "M", node_type: "residential", pv_kw: 0, battery_kwh: 0, avg_load_kw: 0, has_grid_port: true, generator_kw: 0, gen_fuel_type: "diesel", is_deferrable: false, critical_load_kw: 0, x: 400, y: 300 },
     { id: "S", node_type: "cold_storage", pv_kw: 20, battery_kwh: 50, avg_load_kw: 2, has_grid_port: false, generator_kw: 0, gen_fuel_type: "diesel", is_deferrable: false, critical_load_kw: 1.5, x: 250, y: 150 },
@@ -153,6 +167,8 @@ export const useStore = create<AppState>((set) => ({
   environment: { ...DEFAULT_ENV },
   economics: { ...DEFAULT_ECON },
   selectedNodeId: null,
+
+  customEdges: [],
 
   result: null,
   configHash: null,
@@ -219,4 +235,17 @@ export const useStore = create<AppState>((set) => ({
       result: null,
       configHash: null,
     })),
+
+  addCustomEdge: (fromId, toId) => {
+    const name = `${fromId}-${toId}`;
+    const reverse = `${toId}-${fromId}`;
+    const existing = get().customEdges;
+    if (existing.some((e) => e.name === name || e.name === reverse)) return;
+    set((s) => ({
+      customEdges: [...s.customEdges, { name, from_node: fromId, to_node: toId, length_km: 0.06 }],
+    }));
+  },
+
+  removeCustomEdge: (name) =>
+    set((s) => ({ customEdges: s.customEdges.filter((e) => e.name !== name) })),
 }));

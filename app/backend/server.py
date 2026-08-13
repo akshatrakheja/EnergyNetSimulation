@@ -121,6 +121,17 @@ class TimeSeriesPoint(BaseModel):
     curtailed_kw: float = 0.0
     islanded: bool = False
     node_data: dict[str, dict[str, float]] = Field(default_factory=dict)
+    # Topology-level results (from pandapower per step)
+    vm_pu: dict[str, float] = Field(default_factory=dict)          # node_id → voltage (pu)
+    line_flows_kw: dict[str, float] = Field(default_factory=dict)  # "M-S" → kW (+ = from→to)
+    line_loading_pct: dict[str, float] = Field(default_factory=dict)
+
+
+class TopologyEdge(BaseModel):
+    name: str        # e.g. "M-S"
+    from_node: str
+    to_node: str
+    length_km: float
 
 
 class SimResponse(BaseModel):
@@ -130,6 +141,7 @@ class SimResponse(BaseModel):
     economics: dict[str, Any]
     timeseries: list[TimeSeriesPoint]
     viable_vs_retail: str  # "green" / "amber" / "red"
+    topology: list[TopologyEdge] = Field(default_factory=list)
 
 
 class EconRecalcRequest(BaseModel):
@@ -239,23 +251,37 @@ def _econ_to_dict(e: EconResult) -> dict:
 
 
 def _build_timeseries(results: SimResults) -> list[TimeSeriesPoint]:
-    df = results.to_dataframe()
     points = []
-    for t, row in df.iterrows():
-        nd = {}
-        for nid in results.node_cfg:
-            nd[nid] = {}
-            for suffix in ["solar_backplane_kw", "load_kw", "battery_kw", "soc_pct"]:
-                col = f"{nid}_{suffix}"
-                if col in row.index:
-                    nd[nid][suffix] = round(float(row[col]), 3)
+    for s in results.steps:
+        nd: dict[str, dict[str, float]] = {}
+        for nid, r in s.node_results.items():
+            nd[nid] = {
+                "solar_backplane_kw": round(r.solar_kw, 3),
+                "load_kw":            round(r.load_kw, 3),
+                "battery_kw":         round(r.battery_kw, 3),
+                "soc_pct":            round(r.soc_pct, 1),
+            }
+
+        vm_pu = {k: round(v, 4) for k, v in s.pf_results.get("vm_pu", {}).items()}
+        line_flows_kw = {
+            k: round(v * 1000.0, 2)
+            for k, v in s.line_flows_mw.items()
+        }
+        line_loading = {
+            k: round(v, 1)
+            for k, v in s.pf_results.get("line_loading_pct", {}).items()
+        }
+
         points.append(TimeSeriesPoint(
-            t=str(t),
-            grid_exchange_kw=round(float(row.get("grid_exchange_kw", 0)), 3),
-            shed_load_kw=round(float(row.get("shed_load_kw", 0)), 3),
-            curtailed_kw=round(float(row.get("curtailed_kw", 0)), 3),
-            islanded=bool(row.get("islanded", False)),
+            t=str(s.t),
+            grid_exchange_kw=round(s.grid_exchange_kw, 3),
+            shed_load_kw=round(s.shed_load_kw, 3),
+            curtailed_kw=round(s.curtailed_kw, 3),
+            islanded=s.islanded,
             node_data=nd,
+            vm_pu=vm_pu,
+            line_flows_kw=line_flows_kw,
+            line_loading_pct=line_loading,
         ))
     return points
 
@@ -267,6 +293,13 @@ def _build_timeseries(results: SimResults) -> list[TimeSeriesPoint]:
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/api/states")
+def states():
+    """Return all state economics/environment presets."""
+    from src.state_configs import STATES, state_to_dict
+    return {code: state_to_dict(s) for code, s in STATES.items()}
 
 
 @app.get("/api/presets")
@@ -378,6 +411,15 @@ def simulate(req: SimRequest):
     market = _build_market(req.economics, node_cfg)
     econ = compute_economics(results, market)
 
+    # Expose all T1_STAR cables that actually had flow data (pandapower modelled them)
+    from src.network import T1_STAR
+    sample_flows = results.steps[0].line_flows_mw if results.steps else {}
+    topo_edges = [
+        TopologyEdge(name=f"{a}-{b}", from_node=a, to_node=b, length_km=lkm)
+        for a, b, lkm in T1_STAR.cables
+        if f"{a}-{b}" in sample_flows
+    ]
+
     return SimResponse(
         config_hash=ch,
         sim_seconds=round(sim_time, 2),
@@ -385,6 +427,7 @@ def simulate(req: SimRequest):
         economics=_econ_to_dict(econ),
         timeseries=_build_timeseries(results),
         viable_vs_retail=_verdict(econ.viable_tariff_rs_per_kwh, req.economics.discom_retail_rate),
+        topology=topo_edges,
     )
 
 

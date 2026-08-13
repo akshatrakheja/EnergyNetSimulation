@@ -20,10 +20,6 @@ is described in full in:
 > Birgersson et al., "EnergyNet Explained: Internetification of Energy Distribution,"
 > arXiv:2509.08152 (2025).
 > [https://arxiv.org/abs/2509.08152](https://arxiv.org/abs/2509.08152)
-> Also published at: [https://research.chalmers.se/en/publication/548200](https://research.chalmers.se/en/publication/548200)
-
-The open specification and reference implementation are maintained by the EnergyNet Task
-Force at [https://github.com/energyetf/energynet](https://github.com/energyetf/energynet).
 
 The world's first operational EnergyNet installation launched on 26 April 2025 in Lund,
 Sweden — a parallel DC microgrid connecting two buildings via a "Freedom Cable" in the
@@ -33,9 +29,7 @@ Brunnshög Innovation District.
 
 ## Phase 1 — What it established
 
-Phase 1 validated a single energy router at the power-electronics layer (microseconds to
-milliseconds) using OpenModelica. Four converter ports were characterized:
-
+Phase 1 validated a single energy router at the power-electronics layer using OpenModelica.
 
 | Port                  | Role                  | P_max | Peak η |
 | --------------------- | --------------------- | ----- | ------ |
@@ -44,64 +38,116 @@ milliseconds) using OpenModelica. Four converter ports were characterized:
 | Solar (LLC, isolated) | PV input              | 5 kW  | 0.976  |
 | Grid (full AC stack)  | Mothership grid tie   | 5 kW  | 0.937  |
 
-
-Each port's efficiency curve η(P), settling time τ, and standby draw were exported as a
-compact datasheet. Because every port settles in under 20 ms and dispatch decisions are
-made on timescales of seconds to minutes, these parameters enter Phase 2 as lumped
-constants — the quasi-static assumption is justified by Phase 1's τ measurements, not
-assumed.
+Port efficiency curves η(P), settling times τ, and standby draws enter Phase 2 as lumped
+constants — the quasi-static assumption is justified by Phase 1's sub-20ms τ measurements.
 
 ---
 
 ## Phase 2 — This repository
 
-Phase 2 zooms out by roughly three orders of magnitude in time and simulates a
-**community of routers** over hours to weeks. The canonical topology is five nodes —
-three houses (H1, H2, H3), a shared solar farm (S), and a mothership router (M) at the
-grid boundary — connected by DC cables, running quasi-static power-flow at each 15-minute
-timestep.
+Phase 2 zooms out by roughly three orders of magnitude and simulates a **community of
+routers** over hours to weeks. The canonical topology is five nodes — three houses (H1, H2,
+H3), a shared solar farm (S), and a mothership router (M) at the grid boundary —
+connected by DC cables, running quasi-static power-flow at each 15-minute timestep.
 
-The simulation is structured as two layers:
+The simulation is two layers:
 
-- **Layer A — Dispatch:** A pluggable policy decides battery setpoints for each node at
-each step. Policies range from local-greedy to community-buffering to EV-aware V2G, with
-a demand-response variant that shifts deferrable loads (irrigation pumps) to coincide
-with solar surplus.
-- **Layer B — Network:** [pandapower](https://www.pandapower.org/) solves the DC
-power flow, yielding cable currents, I²R losses, bus voltages, and the grid exchange
-absorbed by the mothership VSC.
+- **Layer A — Dispatch:** pluggable policies (local-greedy, community-buffering, EV-aware
+  V2G, generator-aware, demand-response) set battery setpoints each step.
+- **Layer B — Network:** [pandapower](https://www.pandapower.org/) solves DC power flow,
+  yielding cable currents, I²R losses, bus voltages, and the grid exchange at the mothership.
 
-### Simulation scope
+**Scenarios (S0–S7):** sunny baseline, partial PV failure, battery sizing sweeps, seasonal
+variation, community vs. greedy dispatch, large-scale replication, grid cap sweep, and
+islanding with shed-load tracking.
 
-- **Scenarios (S0–S7):** sunny baseline, partial PV failure, battery sizing sweeps,
-seasonal variation, community vs. greedy dispatch, large-scale replication, grid cap
-sweep, and islanding (grid outage with shed-load tracking).
-- **Topologies (T1, T4, T5, T6, TSSPOKE, TDCBUS):** star, ring backplane, V2G
-with bidirectional EV chargers, apartment block, solar-farm-spoke, and shared DC bus.
-- **Load shapes:** nine verified entity-type profiles — residential, shop, cold storage,
+**Topologies (T1, T4, T5, T6, TSSPOKE, TDCBUS):** star, ring backplane, V2G with
+bidirectional EV chargers, apartment block, solar-farm-spoke, and shared DC bus.
+
+**Load shapes:** nine verified entity-type profiles — residential, shop, cold storage,
 telecom tower, school, irrigation pump, street lighting, primary health centre, and
 apartment — calibrated against Prayas eMARC smart-meter data, BEE cluster audits, TRAI
 tower energy surveys, and MNRE rural facility guidelines.
-- **Generator model:** a diesel genset (or biogas) class with a specific fuel consumption
-curve calibrated to BEE efficiency guidelines (2021) for 10–30 kW sets.
-- **Multi-day runs:** up to seven days with per-day weather sequences (summer, monsoon,
-post-monsoon, winter, hazy) drawn from representative north/central India irradiance
-patterns.
 
-### Indian context
+---
 
-The load shapes, weather sequences, regulation research (net metering caps, Virtual Net
-Metering, Group Net Metering, P2P trading pilots), and scenario design are oriented toward
-semi-urban and rural India. Average electricity supply in Indian rural areas reached
-22.6 hours per day in FY2025, up from 12.5 hours in 2014 — but reliability and last-mile
-quality remain active problems, with 13.65 lakh households still sanctioned for grid
-electrification under the Revamped Distribution Sector Scheme as of early
-2026.[^1] Distributed DC microgrids of the kind EnergyNet proposes are a direct
-architectural response to this gap.
+## Economics & Market Layer
 
-[^1]: Ministry of Power, Government of India, Rajya Sabha Unstarred Question No. 1031,
-answered 9 February 2026.
-[https://powermin.gov.in/sites/default/files/uploads/RS09022026_Eng.pdf](https://powermin.gov.in/sites/default/files/uploads/RS09022026_Eng.pdf)
+The financial layer computes a full DISCOM pitch pro-forma for each simulation run.
+
+**Three canonical market configs** (`markets.py`):
+
+| Code | Context       | Anchor loads               | Typical outage |
+|------|---------------|----------------------------|----------------|
+| E1   | Rural         | Houses + pump + cold store | 6–8 h/day      |
+| E2   | Peri-urban    | Houses + shop + tower      | 2–4 h/day      |
+| E3   | Urban         | Apartments + commercial    | 0.5–1.5 h/day  |
+
+**Per-run outputs** (`economics.py`):
+- CAPEX breakdown: solar, BESS, routers, cable — India 2026 EPC rates (MNRE benchmark)
+- Subsidy stack: PM Surya Ghar (₹18,000 central + state top-up), KUSUM FLS, BESS VGF (up to 40%)
+- Revenue streams: P2P energy sales, diesel displacement, demand charge savings, carbon credit
+- LCOE · LCOS · payback · NPV · viable tariff vs. DISCOM retail — **green / amber / red** viability flag
+
+**Lever sweeps** (`econ_scenarios.py`): subsidy on/off × P2P price × battery scale matrices saved to `data/results/econ/`.
+
+**Tariff schedule** (`tariffs.py`): time-of-use slabs, fixed charges, and demand charges modeled for LT domestic, LT commercial, agricultural, and bulk supply categories.
+
+---
+
+## State Presets
+
+`state_configs.py` encodes FY 2025-26 regulatory and physical parameters for **seven Indian states**, each sourced from the relevant SERC tariff order:
+
+| Code | State             | DISCOM                        | Region               |
+|------|-------------------|-------------------------------|----------------------|
+| DL   | Delhi             | BSES Rajdhani/Yamuna · TPDDL  | North India (Urban)  |
+| JH   | Jharkhand         | JBVNL                         | East India           |
+| HP   | Himachal Pradesh  | HPSEBL                        | North India (Hills)  |
+| MH   | Maharashtra       | MSEDCL                        | West India           |
+| MP   | Madhya Pradesh    | MPPKVVCL / MPMKVVCL           | Central India        |
+| KL   | Kerala            | KSEB                          | South India          |
+| KA   | Karnataka         | BESCOM / GESCOM               | South India          |
+
+Each preset carries domestic/commercial/agri tariffs, rural and urban outage hours, GHI, P2P ceiling, wheeling charges, VOLL, subsidy flags, state-adjusted capex, and a pitch narrative. Selecting a state in the GUI hot-loads all economics and environment sliders.
+
+---
+
+## Web GUI
+
+A browser-based simulator built with **React + Vite** (frontend) and **FastAPI** (backend).
+
+**How it works:**
+1. Drag entities from the palette onto the canvas to build a microgrid topology.
+2. Click an entity to set its PV, battery, load, and genset parameters.
+3. Pick a State preset to load state-calibrated economics and outage windows.
+4. Adjust economics sliders (tariff, diesel, P2P price, VOLL, discount rate, subsidies).
+5. Click **Run Simulation** — physics runs once and is cached by config hash.
+6. Scrub the animated playback: flows animate on edges, islanded nodes highlight, a results panel shows LCOE, payback, NPV, and the green/amber/red viability flag.
+7. Moving an economics slider triggers a fast recalculation (<50 ms) without re-running physics.
+
+**Entity palette:** House · Apartment · Cold Store · Shop · Pump · Telecom Tower · Solar Farm · Grid Meter · Genset
+
+**Two-tier backend:** physical config hash → full simulation (~15 s); economics-only change → recompute in <50 ms from cached physics results.
+
+---
+
+## DEG / Beckn P2P Integration
+
+`deg_adapter.py` bridges the Phase 2 simulator to the **DEG wave2 devkit** (Beckn-protocol P2P energy trading).
+
+Flow:
+1. Runs the E1 rural simulation (7-day, 15-min steps).
+2. Aggregates 15-min grid-export intervals → 1-hour BecknTimeSeries slots.
+3. POSTs `confirm` to the wave2 BPP caller (seller side, port 8082).
+4. POSTs `on_status` with actuals and parses `revenueFlows` from the response.
+5. Cross-checks DEG-computed P2P settlement against `economics.py` revenue.
+
+```bash
+python deg_adapter.py [--start] [--market rural|peri_urban|urban] [--verbose]
+```
+
+Devkit endpoints (localhost): BAP caller :8081 · BPP caller :8082 · Seller DISCOM BPP :8083 · Buyer DISCOM BPP :8084 · Caddy full-stack :9000.
 
 ---
 
@@ -109,52 +155,82 @@ answered 9 February 2026.
 
 ```
 src/
-  battery.py       Battery model (SoC, charge/discharge limits)
-  dispatch.py      Dispatch policies (greedy, community, EV-aware, generator-aware, DR)
-  generator.py     Dispatchable generator — diesel / biogas, fuel consumption model
-  metrics.py       Post-run metric computation (SS%, SC%, losses, shed load, fuel)
-  network.py       pandapower network builder; TopologyConfig system
-  ports.py         Port efficiency curves η(P) from Phase 1 datasheet
-  profiles.py      Load and PV profile generation; entity-type load shape catalogue
-  router.py        Per-node energy accounting (Layer A physics)
-  scenarios.py     Scenario runners (S0–S7, T1–T6, topology comparison, grid cap sweep)
-  simulate.py      Main simulation loop (two-layer architecture)
+  battery.py        Battery model (SoC, charge/discharge limits)
+  dispatch.py       Dispatch policies (greedy, community, EV-aware, DR, generator-aware)
+  econ_scenarios.py Economic runners E1/E2/E3 with lever sweeps; saves to data/results/econ/
+  economics.py      CAPEX · subsidy · revenue · LCOE/NPV/payback computation
+  generator.py      Diesel/biogas genset — fuel consumption curve (BEE 2021)
+  markets.py        Rural / peri-urban / urban MarketConfig bundles
+  metrics.py        Post-run metrics (SS%, SC%, losses, shed load, fuel)
+  network.py        pandapower network builder; TopologyConfig system
+  ports.py          Port efficiency curves η(P) from Phase 1 datasheet
+  profiles.py       Load and PV profile generation; entity-type load shape catalogue
+  router.py         Per-node energy accounting (Layer A physics)
+  scenarios.py      Scenario runners S0–S7, T1–T6, topology comparison, grid cap sweep
+  simulate.py       Main simulation loop (two-layer architecture)
+  state_configs.py  FY 2025-26 state presets (DL/JH/HP/MH/MP/KL/KA)
+  subsidies.py      PM Surya Ghar · KUSUM · BESS VGF subsidy stack
+  tariffs.py        TOU tariff schedules — energy, fixed, and demand charges
 
-data/results/      Saved simulation outputs (CSV timeseries + TXT summaries)
+app/
+  backend/
+    server.py       FastAPI server — /simulate, /recalc_economics, /states endpoints
+  frontend/
+    src/
+      components/
+        Canvas.tsx        Drag-and-drop topology editor + animated playback
+        Palette.tsx       Entity drag palette
+        ResultsPanel.tsx  Economics + metrics display
+        Sidebar.tsx       Sliders and toggles; Run button
+        StatePresets.tsx  State selector strip with inline detail
+      store.ts            Zustand state (nodes, environment, economics, sim results)
+      api.ts              Fetch wrappers for backend endpoints
+
+deg_adapter.py      Beckn DEG wave2 devkit integration
+data/results/       Saved CSV timeseries + TXT summaries
 ```
 
 ---
 
-## Dependencies
+## Running
 
-Python 3.11+, pandapower, numpy, pandas, scipy. Install with:
-
+**Backend:**
 ```bash
-pip install pandapower numpy pandas scipy
+pip install fastapi uvicorn pandapower numpy pandas scipy
+uvicorn app.backend.server:app --reload --port 8000
 ```
 
-Run all scenarios:
+**Frontend:**
+```bash
+cd app/frontend
+npm install
+npm run dev          # → http://localhost:5173
+```
 
+**Simulation only (no GUI):**
 ```python
 from src.scenarios import run_all_scenarios
 run_all_scenarios()
+```
+
+**Economic scenarios only:**
+```python
+from src.econ_scenarios import run_all_econ_scenarios
+run_all_econ_scenarios()   # outputs to data/results/econ/
 ```
 
 ---
 
 ## References
 
-- Birgersson et al., "EnergyNet Explained: Internetification of Energy Distribution,"
-arXiv:2509.08152 (2025). [https://arxiv.org/abs/2509.08152](https://arxiv.org/abs/2509.08152)
-- EnergyNet Task Force specification: [https://github.com/energyetf/energynet](https://github.com/energyetf/energynet)
+- Birgersson et al., "EnergyNet Explained," arXiv:2509.08152 (2025). [https://arxiv.org/abs/2509.08152](https://arxiv.org/abs/2509.08152)
+- EnergyNet Task Force: [https://github.com/energyetf/energynet](https://github.com/energyetf/energynet)
 - Prayas (Energy Group), "Electricity Load Patterns," eMARC Dataset, July 2021.
 - BEE / MNRE, "Efficient Operation of Diesel Generating Sets," 2021.
 - Sameeeksha / BEE, "Hooghly Cold Storage Cluster Energy Profile," 2018.
-[https://sameeeksha.org/pdf/Hooghly%20Cold%20Storage%20Cluster%20Profile.pdf](https://sameeeksha.org/pdf/Hooghly%20Cold%20Storage%20Cluster%20Profile.pdf)
-- TRAI / Intelligent Energy, "The True Cost of Providing Energy for Telecom Towers in
-India," 2013.
+- TRAI / Intelligent Energy, "The True Cost of Providing Energy for Telecom Towers in India," 2013.
 - MNRE, "Rural Health Facility Electrification Guidelines," 2019.
-- Ministry of Power, GoI, Rajya Sabha Q.1031, 9 February 2026.
-[https://powermin.gov.in/sites/default/files/uploads/RS09022026_Eng.pdf](https://powermin.gov.in/sites/default/files/uploads/RS09022026_Eng.pdf)
-- Build Log for phase 1 by our team: [https://ribbon-tango-f09.notion.site/BUILD-LOG-37d37b00f67f80048cfbc9450ccd502a?source=copy_link](https://ribbon-tango-f09.notion.site/BUILD-LOG-37d37b00f67f80048cfbc9450ccd502a?source=copy_link)
+- Ministry of Power, GoI, Rajya Sabha Q.1031, 9 February 2026. [https://powermin.gov.in/sites/default/files/uploads/RS09022026_Eng.pdf](https://powermin.gov.in/sites/default/files/uploads/RS09022026_Eng.pdf)
+- Build Log (Phase 1): [https://ribbon-tango-f09.notion.site/BUILD-LOG-37d37b00f67f80048cfbc9450ccd502a](https://ribbon-tango-f09.notion.site/BUILD-LOG-37d37b00f67f80048cfbc9450ccd502a?source=copy_link)
 
+[^1]: Ministry of Power, GoI, Rajya Sabha Unstarred Question No. 1031, answered 9 February 2026.

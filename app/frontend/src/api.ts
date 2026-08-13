@@ -31,3 +31,9 @@ export async function fetchPresets() {
   if (!res.ok) throw new Error("Failed to fetch presets");
   return res.json();
 }
+
+export async function fetchStates() {
+  const res = await fetch(`${API}/api/states`);
+  if (!res.ok) throw new Error("Failed to fetch state configs");
+  return res.json();
+}

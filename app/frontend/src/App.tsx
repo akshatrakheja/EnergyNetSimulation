@@ -2,6 +2,7 @@ import Palette from "./components/Palette";
 import Canvas from "./components/Canvas";
 import Sidebar from "./components/Sidebar";
 import ResultsPanel from "./components/ResultsPanel";
+import StatePresets from "./components/StatePresets";
 
 export default function App() {
   return (
@@ -15,6 +16,7 @@ export default function App() {
       <ResultsPanel />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         <Palette />
+        <StatePresets />
         <Canvas />
       </div>
       <Sidebar />
