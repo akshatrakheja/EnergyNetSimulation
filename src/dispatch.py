@@ -627,6 +627,221 @@ class DemandResponsePolicy(DispatchPolicy):
 
 
 # ---------------------------------------------------------------------------
+# Policy 8 — Outage-Only Genset (baseline counterfactual dispatch)
+# ---------------------------------------------------------------------------
+
+class OutageOnlyGensetPolicy(DispatchPolicy):
+    """CommunityGreedy + gensets dispatched ONLY during known outage windows.
+
+    Used for the baseline counterfactual: grid covers everything during normal
+    hours; gensets fire only during scheduled load-shedding windows.
+
+    Parameters
+    ----------
+    outage_windows : list[tuple[float, float]]
+        Daily outage windows as (start_h, end_h) pairs.  Gensets are armed only
+        when the current simulation hour falls inside one of these windows.
+    farm_id : str
+    gen_threshold_kw : float
+    """
+
+    def __init__(
+        self,
+        outage_windows: list[tuple[float, float]] | None = None,
+        farm_id: str = "S",
+        gen_threshold_kw: float = 0.2,
+    ) -> None:
+        self._community = CommunityGreedyPolicy(farm_id=farm_id)
+        self._gen_aware = GeneratorAwareCommunityPolicy(
+            farm_id=farm_id, gen_threshold_kw=gen_threshold_kw,
+        )
+        self.outage_windows = outage_windows or []
+        self._step = 0
+
+    def dispatch(
+        self,
+        states: dict[str, NodeState],
+        dt_h: float = 0.25,
+    ) -> CommunitySetpoints:
+        current_h = (self._step * dt_h) % 24.0
+        self._step += 1
+
+        in_outage = any(
+            start_h <= current_h < end_h
+            for start_h, end_h in self.outage_windows
+        )
+
+        if in_outage:
+            return self._gen_aware.dispatch(states, dt_h)
+        return self._community.dispatch(states, dt_h)
+
+
+# ---------------------------------------------------------------------------
+# Policy 9 — Outage-Aware Pre-Charge (battery pre-charge before scheduled outages)
+# ---------------------------------------------------------------------------
+
+class OutagePreChargePolicy(DispatchPolicy):
+    """Community genset-aware + pre-charge batteries before known outage windows.
+
+    Strategy:
+      - In the pre-charge window (configurable minutes before each outage start):
+        charge ALL batteries at max rate from grid (grid energy at ₹5.5-8/kWh is
+        3× cheaper than diesel at ₹27/kWh).
+      - During outage: dispatch from batteries first, genset as last resort.
+      - Outside both: normal community greedy dispatch.
+
+    Parameters
+    ----------
+    outage_windows : list[tuple[float, float]]
+        Daily outage windows as (start_h, end_h).
+    pre_charge_minutes : float
+        Minutes before each outage start to begin pre-charging.  Default 30 min.
+    farm_id : str
+    gen_threshold_kw : float
+    """
+
+    def __init__(
+        self,
+        outage_windows: list[tuple[float, float]] | None = None,
+        pre_charge_minutes: float = 30.0,
+        farm_id: str = "S",
+        gen_threshold_kw: float = 0.2,
+    ) -> None:
+        self._community = CommunityGreedyPolicy(farm_id=farm_id)
+        self._gen_aware = GeneratorAwareCommunityPolicy(
+            farm_id=farm_id, gen_threshold_kw=gen_threshold_kw,
+        )
+        self.outage_windows = outage_windows or []
+        self.pre_charge_h = pre_charge_minutes / 60.0
+        self._step = 0
+
+    def dispatch(
+        self,
+        states: dict[str, NodeState],
+        dt_h: float = 0.25,
+    ) -> CommunitySetpoints:
+        current_h = (self._step * dt_h) % 24.0
+        self._step += 1
+
+        # Check if in pre-charge window (just before an outage)
+        in_pre_charge = False
+        for start_h, _end_h in self.outage_windows:
+            pre_start = (start_h - self.pre_charge_h) % 24.0
+            if pre_start < start_h:
+                if pre_start <= current_h < start_h:
+                    in_pre_charge = True
+                    break
+            else:
+                if current_h >= pre_start or current_h < start_h:
+                    in_pre_charge = True
+                    break
+
+        # Check if in outage window
+        in_outage = any(
+            start_h <= current_h < end_h
+            for start_h, end_h in self.outage_windows
+        )
+
+        if in_pre_charge:
+            # Pre-charge: run community greedy then force-charge all batteries
+            cs = self._community.dispatch(states, dt_h)
+            for nid, st in states.items():
+                if st.has_battery and st.battery_headroom_kw > 1e-4:
+                    cs.nodes[nid].battery_kw = min(
+                        st.battery_headroom_kw, P_MAX_BATT_KW,
+                    )
+            return cs
+
+        if in_outage:
+            return self._gen_aware.dispatch(states, dt_h)
+
+        return self._community.dispatch(states, dt_h)
+
+
+# ---------------------------------------------------------------------------
+# Policy 10 — Tariff-Aware Community (ToD battery dispatch)
+# ---------------------------------------------------------------------------
+
+class TariffAwarePolicy(DispatchPolicy):
+    """Community greedy + time-of-day tariff-aware battery dispatch.
+
+    Wraps CommunityGreedyPolicy and modifies battery setpoints during ToD peak
+    pricing windows:
+      - Pre-discharge in the hour before ToD peak: discharge batteries harder
+        to avoid importing during expensive peak window.
+      - During off-peak cheap windows: allow grid import to charge batteries.
+
+    Used by peri-urban and urban scenarios where ToD tariffs are active.
+    Falls back to community greedy when no ToD window is active.
+
+    Parameters
+    ----------
+    schedule : TariffSchedule
+        Tariff with tod_windows defined: [(start_h, end_h, Rs_per_kwh), ...].
+        If None or tod_windows is empty, behaves identically to CommunityGreedyPolicy.
+    farm_id : str
+        Node with the community battery buffer (default "S").
+    peak_discharge_kw : float
+        Extra discharge power (kW) to apply during pre-peak window.
+    """
+
+    def __init__(
+        self,
+        schedule: "TariffSchedule | None" = None,  # type: ignore
+        farm_id: str = "S",
+        peak_discharge_kw: float = 3.0,
+    ) -> None:
+        self._community = CommunityGreedyPolicy(farm_id=farm_id)
+        self.schedule = schedule
+        self.farm_id = farm_id
+        self.peak_discharge_kw = peak_discharge_kw
+        self._step = 0
+
+    def dispatch(
+        self,
+        states: dict[str, NodeState],
+        dt_h: float = 0.25,
+    ) -> CommunitySetpoints:
+        cs = self._community.dispatch(states, dt_h)
+
+        if self.schedule is None or not self.schedule.tod_windows:
+            self._step += 1
+            return cs
+
+        current_h = (self._step * dt_h) % 24.0
+        farm_st = states.get(self.farm_id)
+        if farm_st is None or not farm_st.has_battery:
+            self._step += 1
+            return cs
+
+        # Check if we are in the hour before a ToD peak window
+        for start_h, end_h, _rate in self.schedule.tod_windows:
+            pre_peak_start = (start_h - 1.0) % 24.0
+            in_pre_peak = False
+            if pre_peak_start < start_h:
+                in_pre_peak = pre_peak_start <= current_h < start_h
+            else:
+                in_pre_peak = current_h >= pre_peak_start or current_h < start_h
+
+            if in_pre_peak and farm_st.battery_available_kw > 1e-4:
+                # Pre-discharge: discharge farm battery to reduce peak import later
+                extra_discharge = min(
+                    self.peak_discharge_kw,
+                    farm_st.battery_available_kw,
+                    P_MAX_BATT_KW,
+                )
+                current = cs.nodes[self.farm_id].battery_kw
+                cs.nodes[self.farm_id].battery_kw = min(current, -extra_discharge)
+                break
+
+            # During off-peak (not in any ToD window): allow charging from grid
+            # (CommunityGreedyPolicy already handles this; no override needed)
+
+        self._step += 1
+        return cs
+
+
+# ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
 
@@ -634,7 +849,7 @@ def make_policy(name: str = "greedy", **kwargs) -> DispatchPolicy:
     """Create a policy by name.
 
     Names: 'greedy' | 'predictive' | 'community' | 'community_predictive' |
-           'ev_aware' | 'generator_aware' | 'demand_response'
+           'ev_aware' | 'generator_aware' | 'demand_response' | 'tariff_aware'
     """
     if name == "greedy":
         return GreedyPolicy()
@@ -659,4 +874,14 @@ def make_policy(name: str = "greedy", **kwargs) -> DispatchPolicy:
     if name == "demand_response":
         return DemandResponsePolicy(**{k: v for k, v in kwargs.items()
                                        if k in ("farm_id", "surplus_threshold_kw")})
+    if name == "tariff_aware":
+        return TariffAwarePolicy(**{k: v for k, v in kwargs.items()
+                                    if k in ("schedule", "farm_id", "peak_discharge_kw")})
+    if name == "outage_only_genset":
+        return OutageOnlyGensetPolicy(**{k: v for k, v in kwargs.items()
+                                         if k in ("outage_windows", "farm_id", "gen_threshold_kw")})
+    if name == "outage_pre_charge":
+        return OutagePreChargePolicy(**{k: v for k, v in kwargs.items()
+                                        if k in ("outage_windows", "pre_charge_minutes",
+                                                  "farm_id", "gen_threshold_kw")})
     raise ValueError(f"Unknown policy '{name}'")

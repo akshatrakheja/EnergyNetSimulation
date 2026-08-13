@@ -1,5 +1,8 @@
 # EnergyNet — Community DC Microgrid Simulation
 
+> **Phase 1** (energy router power electronics, OpenModelica):
+> [github.com/akshatrakheja/EnergyNetPhase1](https://github.com/akshatrakheja/EnergyNetPhase1)
+
 ## What EnergyNet is
 
 EnergyNet is an Internet-inspired architecture for electricity distribution. Where the
